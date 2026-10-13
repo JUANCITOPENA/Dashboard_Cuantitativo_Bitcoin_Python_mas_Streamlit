@@ -4,6 +4,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Binance API](https://img.shields.io/badge/Data-Binance%20Public%20API-F0B90B.svg?logo=binance&logoColor=black)](https://binance-docs.github.io/apidocs/spot/en/)
+[![Cloud Ready](https://img.shields.io/badge/Cloud%20Ready-Streamlit%20Cloud%20%7C%20Failover-success)](https://share.streamlit.io/)
 
 Aplicación analítica de trading cuantitativo e inteligencia de mercado desarrollada en **Python** con **Streamlit**, diseñada para monitorear, calcular y visualizar en tiempo real métricas financieras, medias móviles y momentum técnico sobre **Bitcoin (BTC)** y las criptomonedas de mayor cotización del mercado global mediante la API pública de **Binance**.
 
@@ -21,12 +22,43 @@ Aplicación analítica de trading cuantitativo e inteligencia de mercado desarro
 
 ---
 
+## 🛡️ Arquitectura Resiliente Multi-Endpoint (Solución Error HTTP 451)
+
+### 📌 Diagnóstico del Error HTTP 451 en la Nube
+Al desplegar aplicaciones en plataformas como **Streamlit Community Cloud**, los servidores y contenedores operan en centros de datos ubicados en Estados Unidos (ej. AWS `us-east-1`). Debido a regulaciones financieras estrictas de EE.UU. (SEC y CFTC), el endpoint internacional de Binance (`api.binance.com`) **bloquea por geolocalización** cualquier petición que provenga de datacenters estadounidenses, arrojando el error:
+
+```text
+451 Client Error: Unavailable For Legal Reasons for url: https://api.binance.com/api/v3/klines...
+```
+
+### ⚡ Estrategia de Conmutación por Error en Cascada (*Failover*)
+Para asegurar **alta disponibilidad y cero tiempo de inactividad** tanto en ejecución local como en la nube, el sistema incorpora un gestor resiliente que consulta en milisegundos un pool jerarquizado de endpoints autorizados:
+
+```text
+                                  ┌──► [1] api.binance.com (Internacional / Residencial)
+                                  │         │ (HTTP 451 / Bloqueo en EE.UU.)
+                                  │         ▼
+Petición de Mercado (Klines/Price) ┼──► [2] api.binance.us (Autorizado en Servidores USA / Streamlit Cloud)
+                                  │         │ (Si ocurre timeout / 5xx)
+                                  │         ▼
+                                  ├──► [3] data-api.binance.vision (Endpoint Público Institucional)
+                                  │         │
+                                  │         ▼
+                                  └──► [4] api1 / api2 / api3.binance.com (Espejos de contingencia)
+```
+
+1. **Fallback Automático e Invisible:** Si el endpoint internacional responde con `HTTP 451`, `403` o `Timeout`, la función conmuta de inmediato a `api.binance.us` (cuya estructura de respuesta JSON para Klines y Ticker es 100% compatible).
+2. **Cabeceras HTTP Personalizadas:** Envío de `User-Agent` moderno para evitar falsos positivos de bloqueo por bots o scrapers.
+3. **Caché en Memoria (`st.cache_data`):** Minimiza la carga de peticiones y optimiza la velocidad de respuesta (TTL de 10 min para ranking y 5 min para velas históricas).
+
+---
+
 ## 🚀 Características Principales
 
 1. **Top 10 Activos de Mayor Valor en Binance:**
-   - Consulta dinámica a la API de Binance (`/api/v3/ticker/price`) con actualización en caché cada 10 minutos.
-   - Filtro inteligente de pares en `USDT` excluyendo tokens apalancados/derivados (UP, DOWN, BULL, BEAR).
-   - Selector interactivo en la barra lateral con ranking desplegable en tiempo real.
+   - Consulta dinámica con actualización en caché cada 10 minutos.
+   - Filtro inteligente de pares en `USDT` descartando tokens derivados/apalancados (UP, DOWN, BULL, BEAR).
+   - Selector interactivo en la barra lateral con ranking desplegable en vivo.
 
 2. **Horizonte Temporal Ajustable:**
    - Slider interactivo para seleccionar marcos de análisis entre **30 y 365 días**.
@@ -53,7 +85,7 @@ Aplicación analítica de trading cuantitativo e inteligencia de mercado desarro
 
 - **[Python](https://www.python.org/)** (v3.10+)
 - **[Streamlit](https://streamlit.io/)** - Framework web interactivo de alto rendimiento.
-- **[Requests](https://requests.readthedocs.io/)** - Consumo de endpoints REST públicos de Binance.
+- **[Requests](https://requests.readthedocs.io/)** - Consumo de endpoints REST públicos con arquitectura failover.
 - **[Pandas](https://pandas.pydata.org/)** - Transformación de series temporales, cálculos cuantitativos y formateo condicional.
 - **[NumPy](https://numpy.org/)** - Operaciones vectorizadas y cálculo numérico.
 - **[Matplotlib](https://matplotlib.org/)** - Visualización y maquetación de gráficos financieros multieje.
@@ -71,10 +103,10 @@ Aplicación analítica de trading cuantitativo e inteligencia de mercado desarro
 │   ├── Screenshot_2.png     # Captura de pantalla de gráficos
 │   └── Screenshot_74.png    # Captura de la tabla cuantitativa
 ├── .gitignore               # Exclusión de venv, temporales y caché
-├── app.py                   # Código principal de la aplicación Streamlit
+├── app.py                   # Código principal con resiliencia multi-endpoint
 ├── requirements.txt         # Dependencias del proyecto
 ├── LICENSE                  # Licencia MIT
-└── README.md                # Documentación del proyecto
+└── README.md                # Documentación técnica exhaustiva
 ```
 
 ---
@@ -117,7 +149,7 @@ http://localhost:8501
 
 ## ☁️ Despliegue en Streamlit Community Cloud
 
-Para desplegar este dashboard de forma gratuita en la nube:
+Para desplegar este dashboard de forma gratuita en la nube con compatibilidad total:
 
 1. Haz un fork o sube este repositorio a tu cuenta de GitHub.
 2. Ingresa a [share.streamlit.io](https://share.streamlit.io/) e inicia sesión con tu cuenta de GitHub.
@@ -127,6 +159,8 @@ Para desplegar este dashboard de forma gratuita en la nube:
    - **Branch:** `main`
    - **Main file path:** `app.py`
 5. Haz clic en **"Deploy"**.
+
+*(Gracias a la arquitectura resiliente incorporada en `app.py`, la aplicación superará automáticamente las restricciones de geolocalización de Binance en servidores de EE.UU.)*
 
 ---
 
