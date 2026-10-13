@@ -48,20 +48,59 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
+# CONFIGURACIÓN DE RED Y RESILIENCIA MULTI-ENDPOINT
+# ==========================================
+# Nota técnica: Streamlit Cloud aloja sus servidores en EE.UU. Binance internacional
+# (api.binance.com) bloquea con HTTP 451 las solicitudes desde datacenters de EE.UU.
+# Para garantizar disponibilidad 100%, implementamos fallback automático en cascada.
+ENDPOINTS_BINANCE = [
+    "https://api.binance.com",
+    "https://api.binance.us",
+    "https://data-api.binance.vision",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com"
+]
+
+HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "application/json"
+}
+
+def consultar_binance_resiliente(path: str, params: dict = None):
+    """
+    Ejecuta peticiones HTTP con conmutación por error (failover) automática.
+    Si un endpoint devuelve HTTP 451 (restricción geográfica en la nube) u otro error,
+    conmuta en milisegundos al siguiente endpoint disponible (ej. Binance US).
+    """
+    bitacora_errores = []
+    for base_url in ENDPOINTS_BINANCE:
+        url_completa = f"{base_url}{path}"
+        try:
+            resp = requests.get(url_completa, params=params, headers=HTTP_HEADERS, timeout=8)
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                bitacora_errores.append(f"{base_url} (HTTP {resp.status_code})")
+        except Exception as ex:
+            bitacora_errores.append(f"{base_url} ({type(ex).__name__})")
+            continue
+    raise RuntimeError(f"No fue posible conectar con los proveedores de mercado: {', '.join(bitacora_errores)}")
+
+# ==========================================
 # FUNCIÓN: OBTENER EL TOP 10 DE CRIPTOS MÁS CARAS
 # ==========================================
 @st.cache_data(ttl=600)  # Se actualiza cada 10 minutos
 def obtener_top_10_mas_caras():
-    url = "https://api.binance.com/api/v3/ticker/price"
     try:
-        data = requests.get(url, timeout=10).json()
+        data = consultar_binance_resiliente("/api/v3/ticker/price")
         
         # Filtramos solo pares en USDT y descartamos tokens derivados/apalancados
         excluir = ["UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"]
         filtrados = [
             {"symbol": item["symbol"], "price": float(item["price"])}
             for item in data
-            if item["symbol"].endswith("USDT") and not any(e in item["symbol"] for e in excluir)
+            if item.get("symbol", "").endswith("USDT") and not any(e in item.get("symbol", "") for e in excluir)
         ]
         
         df_top = pd.DataFrame(filtrados)
@@ -69,7 +108,7 @@ def obtener_top_10_mas_caras():
         df_top = df_top.sort_values(by="price", ascending=False).head(10).reset_index(drop=True)
         return df_top
     except Exception:
-        # Respaldo en caso de fallo de red
+        # Respaldo de alta resiliencia en caso de contingencia total de red
         return pd.DataFrame({
             "symbol": ["BTCUSDT", "WBTCUSDT", "PAXGUSDT", "YFIUSDT", "ETHUSDT"],
             "price": [90000.0, 90000.0, 2700.0, 6000.0, 2600.0]
@@ -108,10 +147,10 @@ with st.sidebar.expander("📋 Ver Ranking Top 10 Precios"):
 # ==========================================
 @st.cache_data(ttl=300)
 def cargar_datos(symbol: str, limit: int):
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit={limit}"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    raw = response.json()
+    raw = consultar_binance_resiliente(
+        "/api/v3/klines",
+        params={"symbol": symbol, "interval": "1d", "limit": limit}
+    )
     
     cols = ["OpenTime", "Open", "High", "Low", "Close", "Volume"]
     df = pd.DataFrame(raw).iloc[:, :6]
